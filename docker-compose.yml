@@ -1,0 +1,136 @@
+name: migration-studio
+
+x-backend: &backend
+  build: ./backend
+  image: migration-studio-backend:dev
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://studio:${APP_DB_PASSWORD}@app-db:5432/studio
+    REDIS_URL: redis://redis:6379/0
+  volumes:
+    - ./backend:/srv/backend
+  depends_on:
+    app-db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  # Application metadata: connections, projects, jobs, scan and comparison results.
+  app-db:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD}
+      POSTGRES_DB: studio
+    volumes:
+      - app-db-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio -d studio"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Compile gate for converted code (plpgsql_check + orafce). Holds no real data.
+  scratch-pg:
+    build: ./docker/scratch-pg
+    image: migration-studio-scratch-pg:dev
+    environment:
+      POSTGRES_USER: scratch
+      POSTGRES_PASSWORD: ${SCRATCH_DB_PASSWORD}
+      POSTGRES_DB: scratch
+    ports:
+      - "127.0.0.1:5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scratch -d scratch"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    <<: *backend
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    <<: *backend
+    command: celery -A app.worker:celery_app worker --loglevel=INFO --concurrency=2
+    volumes:
+      - ./backend:/srv/backend
+      - work-data:/data/work
+    depends_on:
+      api:
+        condition: service_healthy
+
+  ui:
+    image: node:22.12-alpine
+    working_dir: /app
+    command: sh -c "npm ci --no-audit --no-fund && npm run dev -- --host 0.0.0.0"
+    environment:
+      API_PROXY_TARGET: http://api:8000
+    volumes:
+      - ./ui:/app
+      - ui-node-modules:/app/node_modules
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      - api
+
+  # Optional local Oracle with sample PL/SQL. Start with: docker compose --profile sandbox up -d
+  oracle-sandbox:
+    profiles: ["sandbox"]
+    image: gvenzl/oracle-free:23-slim-faststart
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_SANDBOX_SYS_PASSWORD}
+    volumes:
+      - ./docker/oracle-sandbox/init:/container-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:1521:1521"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # Optional "already migrated" PostgreSQL copy of the sample schema, with planted
+  # migration bugs, to exercise Scenario 2. Same image as scratch-pg (plpgsql_check, orafce).
+  postgres-sandbox:
+    profiles: ["sandbox"]
+    image: migration-studio-scratch-pg:dev
+    build: ./docker/scratch-pg
+    environment:
+      POSTGRES_USER: sandbox_owner
+      POSTGRES_PASSWORD: ${SCRATCH_DB_PASSWORD}
+      POSTGRES_DB: migrated
+    volumes:
+      - ./docker/postgres-sandbox/init/20_migrated_migdemo.sql:/docker-entrypoint-initdb.d/20_migrated_migdemo.sql:ro
+    ports:
+      - "127.0.0.1:5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sandbox_owner -d migrated"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  app-db-data:
+  work-data:
+  ui-node-modules:
