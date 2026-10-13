@@ -492,3 +492,11 @@ tr.diff-row:has(+ tr.diff-msg) > td { border-bottom: none; }
 .cmp-area-error { background: var(--bad-bg); color: var(--bad); }
 .cmp-area-warning { background: var(--warn-bg); color: var(--warn); }
 .cmp-headline { max-width: 460px; }
+.routine-list { max-height: 640px; overflow-y: auto; }
+.routine-list thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.routine-detail { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.routine-detail h4 { margin: 0 0 6px; font-size: 13px; }
+.routine-detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; }
+.routine-diff-group { margin-bottom: 8px; }
+.routine-source { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+@media (max-width: 1000px) { .routine-detail-grid { grid-template-columns: 1fr; } }

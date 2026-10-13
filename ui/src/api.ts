@@ -684,6 +684,43 @@ export interface CompareOverview {
   tables: OverviewTable[];
 }
 
+export interface RoutineParam { position: number; name: string | null; mode: string; type: string; defaulted?: boolean }
+
+export interface RoutineSide {
+  code_id: string;
+  schema: string;
+  name: string;
+  kind: string;
+  package: string | null;
+  member: string | null;
+  operations: string[];
+  signature?: { name: string; arguments: RoutineParam[]; return_type?: string | null; result?: string | null; kind: string };
+  range?: [number, number] | null;
+}
+
+export interface RoutineDifference {
+  category: "signature" | "tables" | "code";
+  severity: Severity;
+  title: string;
+  detail: string;
+  left_lines: number[];
+  right_lines: number[];
+}
+
+export interface RoutineRow {
+  left: RoutineSide | null;
+  right: RoutineSide | null;
+  status: "same" | "info" | "warning" | "error";
+  differences: RoutineDifference[];
+}
+
+export interface RoutineComparisonResult {
+  names: [string, string];
+  routines: RoutineRow[];
+  counts: Record<"same" | "info" | "warning" | "error", number>;
+  differences: number;
+}
+
 export const catalogApi = {
   snapshots: (connectionId: string) =>
     request<CatalogSnapshot[]>("GET", `/connections/${connectionId}/catalog-snapshots`),
@@ -700,6 +737,8 @@ export const catalogApi = {
       "GET", `/catalog-snapshots/${snapshotId}/find-table?${new URLSearchParams({ schema, name })}`),
   compareOverview: (leftSnapshot: string, rightSnapshot: string) =>
     request<CompareOverview>("GET", `/catalog-compare/overview?${new URLSearchParams({ left_snapshot: leftSnapshot, right_snapshot: rightSnapshot })}`),
+  compareRoutines: (left: string, right: string) =>
+    request<RoutineComparisonResult>("GET", `/catalog-compare/routines?${new URLSearchParams({ left, right })}`),
   compare: (left: string, right: string) =>
     request<TableComparison>("GET", `/catalog-compare?${new URLSearchParams({ left, right })}`),
   perfState: (tableId: string) => request<PerfReviewState>("GET", `/catalog-tables/${tableId}/perf-reviews`),

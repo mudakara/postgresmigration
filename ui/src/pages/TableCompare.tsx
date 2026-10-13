@@ -15,6 +15,7 @@ import {
   type TableComparison,
 } from "../api";
 import { JobProgress } from "../components/comparison";
+import RoutineComparison from "./compare/RoutineComparison";
 import SourceViewer, { type LineMark } from "../components/SourceViewer";
 import { EmptyState, ErrorBanner, KindTag, PageHeader, formatTime } from "../components/ui";
 
@@ -370,8 +371,14 @@ function Comparison({ data }: { data: TableComparison }) {
         </p>
       </section>
       {SECTIONS.map((def) => (
-        <Section key={def.key} def={def} rows={data.sections[def.key]} names={data.names}
-          onlyDiffs={onlyDiffs} counts={data.section_counts[def.key]} />
+        <Fragment key={def.key}>
+          <Section def={def} rows={data.sections[def.key]} names={data.names}
+            onlyDiffs={onlyDiffs} counts={data.section_counts[def.key]} />
+          {def.key === "code" && (
+            <RoutineComparison leftTableId={data.left.table.id} rightTableId={data.right.table.id}
+              tableLabel={`${data.left.table.schema_name}.${data.left.table.name}`} />
+          )}
+        </Fragment>
       ))}
     </>
   );

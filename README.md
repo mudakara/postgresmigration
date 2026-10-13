@@ -14,7 +14,7 @@ The app only **reads** the databases you connect to (sessions are read-only; see
 | **Projects → Scan & report** | Inventory every PL/SQL object in Oracle, flag risky constructs, and estimate the migration effort (Ora2Pg cost + the app's own rules). |
 | **Projects → Comparison** | For an existing migration: pair every Oracle routine, view and trigger with its PostgreSQL counterpart, compare signatures, run static pitfall checks and `plpgsql_check`, and optionally have Claude review each pair. |
 | **Schema explorer** | Browse any connection's tables, columns, indexes, foreign keys (with a relationship diagram), triggers, and the procedures and functions that use each table. Search code, find unindexed foreign keys, and ask Claude which code needs performance work. |
-| **Table compare** | Put Oracle and PostgreSQL side by side, compare one table (data types, keys, indexes, foreign keys, triggers, code that uses it) or list every table with problems. |
+| **Table compare** | Put Oracle and PostgreSQL side by side, compare one table (data types, keys, indexes, foreign keys, triggers) and each stored procedure that uses it (parameters, tables used, code pitfalls), or list every table with problems. |
 | **Sequence check** | After loading data, find PostgreSQL sequences that are behind the data (the cause of *duplicate key* errors on insert) and generate a script that fixes them. |
 | **Jobs** | Follow long-running work (scans, comparisons, catalog reads, reviews) and read its logs. |
 
@@ -344,6 +344,13 @@ Each section lines the two tables up row by row: half the page per database, wit
 | Triggers | By name (or by timing and events when renamed): timing, events, row/statement, enabled. |
 | Procedures, functions and packages | Matched across the migration: an Oracle package member `PKG.MEMBER` matches PostgreSQL `pkg.member`, as Ora2Pg names it. Shows code that is missing, or that exists but no longer uses the table, and operation changes such as "no longer DELETE" (per package member). |
 | Views | Views reading the table. |
+
+**Stored procedure comparison:** below the routines list, each procedure and function that uses the selected table is compared with its counterpart:
+- **Parameters:** matched by name when they have been reordered, then names, order, `IN`/`OUT` modes, types, defaults and return type. Conversions Ora2Pg makes on purpose (procedure `OUT` → `INOUT`, `NUMBER` parameters → `bigint`) are shown as notes rather than problems.
+- **Tables used:** every table each version reads or writes, for example *no longer uses `app.audit_log`* or *no longer UPDATEs*. For Oracle packages this is per member.
+- **Code checks:** the Oracle→PostgreSQL pitfall checks, such as a dead `NO_DATA_FOUND` handler, `SELECT INTO` without `STRICT`, a `(+)` join that became an inner join, or `''` compared as NULL.
+
+Choose **By routine** to expand a pair: its differences, the parameters side by side, and both sources with the lines marked (only the member's lines for a package member). Choose **List differences** for every difference in one table, filterable by severity, kind and name, and downloadable as CSV.
 
 **All tables:** above the comparison, every matching pair of tables is compared at once (under a second for about 2,000 pairs; cached per pair of catalog reads), so you can go straight to the tables that need attention. Filter by:
 - *with problems*, *with differences*, *only in Oracle*, *only in PostgreSQL*, or *matching*;

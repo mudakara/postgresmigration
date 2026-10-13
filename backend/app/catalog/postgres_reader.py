@@ -186,6 +186,7 @@ def read_catalog(
             SELECT p.oid::bigint AS oid, n.nspname AS schema, p.proname AS name,
                    CASE WHEN p.prokind = 'p' THEN 'procedure' ELSE 'function' END AS kind,
                    pg_get_function_identity_arguments(p.oid) AS args, pg_get_function_result(p.oid) AS result,
+                   pg_get_function_arguments(p.oid) AS full_args,
                    l.lanname AS language, p.prorettype = 'trigger'::regtype AS is_trigger_function,
                    (SELECT substr(cfg, 13) FROM unnest(p.proconfig) cfg WHERE cfg LIKE 'search_path=%%') AS search_path,
                    CASE WHEN l.lanname IN ('internal', 'c') THEN NULL ELSE pg_get_functiondef(p.oid) END AS source
@@ -198,7 +199,7 @@ def read_catalog(
             signature = f"{r['name']}({r['args']})" + (f" RETURNS {r['result']}" if r["result"] else "")
             fn = Code(
                 schema=r["schema"], name=r["name"], kind=r["kind"], signature=signature, language=r["language"],
-                source=r["source"], extra={"is_trigger_function": r["is_trigger_function"]},
+                source=r["source"], extra={"is_trigger_function": r["is_trigger_function"], "arguments": r["full_args"]},
                 search_path=_parse_search_path(r["search_path"], user) if r["search_path"] else [],
             )
             code.append(fn)

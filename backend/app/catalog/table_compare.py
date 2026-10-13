@@ -434,16 +434,30 @@ def _code_keys(e: dict[str, Any]) -> list[tuple[str, str]]:
     return [(e["schema"].lower(), e["name"].lower())]
 
 
-def compare_code(lt, rt, names, right_code_names: set[str]) -> list[dict[str, Any]]:
+def match_code(lt, rt) -> tuple[list[tuple[dict[str, Any], dict[str, Any] | None]], list[dict[str, Any]]]:
+    """Pair the routines using one table with those using the other: (left entry, its
+    match or None) for every left routine, and the right routines left unmatched."""
     left, right = _code_entries(lt.get("used_by", [])), _code_entries(rt.get("used_by", []))
     right_index: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for e in right:
         for k in _code_keys(e):
             right_index.setdefault(k, []).append(e)
-    rows, used = [], set()
+    pairs, used = [], set()
     for e in left:
         match = next((right_index[k] for k in _code_keys(e) if k in right_index), None)
-        if not match:
+        other = None
+        if match:
+            other = next((m for m in match if id(m) not in used), match[0])
+            used.add(id(other))
+        pairs.append((e, other))
+    return pairs, [e for e in right if id(e) not in used]
+
+
+def compare_code(lt, rt, names, right_code_names: set[str]) -> list[dict[str, Any]]:
+    pairs, unmatched = match_code(lt, rt)
+    rows = []
+    for e, other in pairs:
+        if other is None:
             exists = any(k[1] in right_code_names or f"{k[0]}.{k[1]}" in right_code_names for k in _code_keys(e))
             rows.append(_row(
                 "error" if exists else "warning", e, None,
@@ -451,8 +465,6 @@ def compare_code(lt, rt, names, right_code_names: set[str]) -> list[dict[str, An
                 if exists else f"Not found in {names[1]} code that uses this table (not migrated, or renamed)",
             ))
             continue
-        other = match[0]
-        used.add(id(other))
         ops_l, ops_r = set(e["operations"]), set(other["operations"])
         status, message = "same", ""
         if e.get("operations_scope") == "package":
@@ -466,9 +478,7 @@ def compare_code(lt, rt, names, right_code_names: set[str]) -> list[dict[str, An
             if lost:
                 message += f" (no longer {', '.join(sorted(o.upper() for o in lost))})"
         rows.append(_row(status, e, other, message))
-    for e in right:
-        if id(e) not in used:
-            rows.append(_row("info", None, e, f"Only in {names[1]}"))
+    rows += [_row("info", None, e, f"Only in {names[1]}") for e in unmatched]
     return rows
 
 

@@ -414,3 +414,28 @@ def compare_tables(left: uuid.UUID, right: uuid.UUID, db: Session = Depends(get_
     result = compare(sides[0]["table"], sides[1]["table"], left_dialect=sides[0]["kind"], right_dialect=sides[1]["kind"],
                      names=names, right_code_names=right_code_names)
     return {"left": sides[0], "right": sides[1], "names": names, **result}
+
+
+_ROUTINE_CACHE: dict[tuple[uuid.UUID, uuid.UUID], dict] = {}
+
+
+@router.get("/catalog-compare/routines")
+def compare_routines_of_table(left: uuid.UUID, right: uuid.UUID, db: Session = Depends(get_db)):
+    """Each procedure/function using the left table compared with its counterpart using
+    the right table: parameters, tables used, and code pitfalls. Cached per table pair."""
+    from app.catalog.routine_compare import compare_routines
+
+    key = (left, right)
+    if key not in _ROUTINE_CACHE:
+        sides = [get_table(t, db) for t in (left, right)]
+        snaps = [db.get(CatalogSnapshot, d.snapshot_id) for d in sides]
+        names, kinds = _side_names(db, *snaps)
+        pg_conn = next((db.get(Connection, s.connection_id) for s, k in zip(snaps, kinds) if k == "postgres"), None)
+        extensions = ((pg_conn.capabilities or {}).get("extensions") or {}) if pg_conn else {}
+        orafce = bool((extensions.get("orafce") or {}).get("installed_version"))
+        result = compare_routines(db, sides[0].model_dump(mode="json"), sides[1].model_dump(mode="json"),
+                                  left_dialect=kinds[0], right_dialect=kinds[1], names=names, orafce=orafce)
+        if len(_ROUTINE_CACHE) >= 20:
+            _ROUTINE_CACHE.pop(next(iter(_ROUTINE_CACHE)))
+        _ROUTINE_CACHE[key] = result
+    return _ROUTINE_CACHE[key]
