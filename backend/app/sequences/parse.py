@@ -109,3 +109,48 @@ def find_uses(source: str) -> list[SequenceUse]:
             if seq:
                 uses.append(SequenceUse(dotted(seq.group(1)), column, dotted(m.group(1)), "insert"))
     return list(dict.fromkeys(uses))
+
+
+# --- Oracle ------------------------------------------------------------------------------------
+# Triggers fill keys with :NEW.ID := SEQ.NEXTVAL (or NVL(:NEW.ID, SEQ.NEXTVAL)) or
+# SELECT SEQ.NEXTVAL INTO :NEW.ID FROM DUAL; code with INSERT ... VALUES (SEQ.NEXTVAL, ...).
+
+_ORA_NAME = r'(?:"[^"]+"|[A-Za-z][\w$#]*)'
+_ORA_SEQ = rf"({_ORA_NAME}(?:\s*\.\s*{_ORA_NAME})?)\s*\.\s*NEXTVAL\b"
+_ORA_NEW_COL = rf":NEW\s*\.\s*({_ORA_NAME})"
+_ORA_ASSIGN = re.compile(
+    _ORA_NEW_COL + rf"\s*:=\s*(?:(?:NVL|COALESCE)\s*\(\s*:NEW\s*\.\s*{_ORA_NAME}\s*,\s*)?" + _ORA_SEQ, re.I)
+_ORA_SELECT_INTO = re.compile(r"SELECT\s+" + _ORA_SEQ + r"\s+INTO\s+" + _ORA_NEW_COL, re.I)
+_ORA_INSERT = re.compile(
+    rf"INSERT\s+INTO\s+({_ORA_NAME}(?:\s*\.\s*{_ORA_NAME})?)\s*(?:{_ORA_NAME}\s*)?\(([^()]*)\)\s*(VALUES\s*\(|SELECT\b)", re.I)
+_ORA_SEQ_IN = re.compile(_ORA_SEQ, re.I)
+
+
+def ora_ident(part: str) -> str:
+    """Oracle folding: unquoted names are upper-cased, quoted ones kept."""
+    part = part.strip()
+    if len(part) > 1 and part[0] == part[-1] == '"':
+        return part[1:-1]
+    return part.upper()
+
+
+def _ora_dotted(name: str) -> tuple[str, ...]:
+    return tuple(ora_ident(p) for p in re.split(r"\s*\.\s*(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)", name.strip()) if p.strip())
+
+
+def find_oracle_uses(source: str) -> list[SequenceUse]:
+    """Where PL/SQL code puts a sequence's NEXTVAL into a column."""
+    code = mask(source).with_strings
+    uses: list[SequenceUse] = []
+    for m in _ORA_ASSIGN.finditer(code):
+        uses.append(SequenceUse(_ora_dotted(m.group(2)), ora_ident(m.group(1)), None, "trigger"))
+    for m in _ORA_SELECT_INTO.finditer(code):
+        uses.append(SequenceUse(_ora_dotted(m.group(1)), ora_ident(m.group(2)), None, "trigger"))
+    for m in _ORA_INSERT.finditer(code):
+        columns = [ora_ident(c) for c in m.group(2).split(",") if c.strip()]
+        values = _split_top_level(code, m.end(), stop_at_close=m.group(3).upper().startswith("VALUES"))
+        for column, value in zip(columns, values, strict=False):
+            seq = _ORA_SEQ_IN.search(value)
+            if seq:
+                uses.append(SequenceUse(_ora_dotted(seq.group(1)), column, _ora_dotted(m.group(1)), "insert"))
+    return list(dict.fromkeys(uses))

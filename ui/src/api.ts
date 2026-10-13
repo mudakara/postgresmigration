@@ -5,6 +5,7 @@ export interface ConnectionOptions {
   use_sid?: boolean;
   user_grants?: boolean | null;
   sslmode?: string | null;
+  schemas?: string[];  // schemas in scope for every feature; empty = all
 }
 
 export interface Connection {
@@ -146,6 +147,9 @@ export const api = {
   testUnsaved: (input: Omit<ConnectionInput, "name">) =>
     request<TestResult>("POST", "/connections/test", input),
   ora2pgCheck: (id: string) => request<Job>("POST", `/connections/${id}/ora2pg-check`),
+  packageSchemas: (id: string, oracleId: string) =>
+    request<{ oracle_packages: number; schemas: string[]; not_found: string[] }>(
+      "GET", `/connections/${id}/package-schemas?oracle_connection_id=${oracleId}`),
 
   projects: () => request<Project[]>("GET", "/projects"),
   createProject: (input: ProjectInput) => request<Project>("POST", "/projects", input),
@@ -721,6 +725,46 @@ export interface RoutineComparisonResult {
   differences: number;
 }
 
+export type StatsArea =
+  | "tables" | "views" | "columns" | "indexes" | "foreign_keys" | "procedures" | "functions"
+  | "trigger_functions" | "packages" | "triggers" | "invalid_code";
+
+export interface SnapshotStats {
+  totals: Record<StatsArea, number>;
+  extras: {
+    partitioned_tables: number; partitions: number; rows_estimate: number; tables_without_primary_key: number;
+    unique_indexes: number; unindexed_foreign_keys: number; indexed_columns: number; invalid_code: number;
+    disabled_triggers: number; package_members: number; package_procedures: number; package_functions: number;
+  };
+  by_schema: ({ schema: string } & Record<StatsArea, number>)[];
+}
+
+export interface StatsItems {
+  area: StatsArea;
+  total: number;
+  items: Record<string, any>[];
+  filters: Record<string, string>;
+}
+
+export type InventoryArea = "tables" | "views" | "columns" | "indexes" | "foreign_keys" | "procedures" | "functions" | "triggers";
+
+export interface InventoryAreaDiff {
+  left: number;
+  right: number;
+  matched: number;
+  only_left: Record<string, any>[];
+  only_right: Record<string, any>[];
+  kind_changed?: Record<string, any>[];
+  notes: string[];
+}
+
+export interface InventoryDiff {
+  names: [string, string];
+  kinds: [DbKind, DbKind];
+  connections: [string, string];
+  areas: Record<InventoryArea, InventoryAreaDiff>;
+}
+
 export const catalogApi = {
   snapshots: (connectionId: string) =>
     request<CatalogSnapshot[]>("GET", `/connections/${connectionId}/catalog-snapshots`),
@@ -737,6 +781,11 @@ export const catalogApi = {
       "GET", `/catalog-snapshots/${snapshotId}/find-table?${new URLSearchParams({ schema, name })}`),
   compareOverview: (leftSnapshot: string, rightSnapshot: string) =>
     request<CompareOverview>("GET", `/catalog-compare/overview?${new URLSearchParams({ left_snapshot: leftSnapshot, right_snapshot: rightSnapshot })}`),
+  inventoryDiff: (leftSnapshot: string, rightSnapshot: string) =>
+    request<InventoryDiff>("GET", `/catalog-compare/inventory?${new URLSearchParams({ left_snapshot: leftSnapshot, right_snapshot: rightSnapshot })}`),
+  stats: (snapshotId: string) => request<SnapshotStats>("GET", `/catalog-snapshots/${snapshotId}/stats`),
+  statsItems: (snapshotId: string, area: StatsArea, params: URLSearchParams) =>
+    request<StatsItems>("GET", `/catalog-snapshots/${snapshotId}/stats/${area}?${params}`),
   compareRoutines: (left: string, right: string) =>
     request<RoutineComparisonResult>("GET", `/catalog-compare/routines?${new URLSearchParams({ left, right })}`),
   compare: (left: string, right: string) =>
@@ -818,4 +867,42 @@ export const sequenceApi = {
     if (!resp.ok) throw new ApiError(resp.status, `${resp.status} ${resp.statusText}`);
     return resp.text();
   },
+};
+
+// --- sequence statistics ---------------------------------------------------------------------
+
+export interface SequenceStatsBrief {
+  id: string;
+  oracle_connection_id: string | null;
+  postgres_connection_id: string | null;
+  job_id: string | null;
+  status: JobStatus;
+  summary: {
+    oracle_sequences?: number; postgres_sequences?: number; cross_schema?: number; tables_compared?: number;
+    table_status?: Record<"error" | "warning" | "info" | "ok", number>;
+  };
+  warnings: string[];
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface SchemaSeqStats { schema: string; sequences: number; own: number; other_schema: number; code_only: number; unlinked: number }
+
+export interface SequenceStatsDetail extends SequenceStatsBrief {
+  result: {
+    oracle: { sequences: Record<string, any>[]; schemas: SchemaSeqStats[] } | null;
+    postgres: { sequences: Record<string, any>[]; schemas: SchemaSeqStats[] } | null;
+    cross_schema: Record<string, any>[];
+    tables: Record<string, any>[];
+    unlinked: Record<string, any>[];
+  };
+}
+
+export const sequenceStatsApi = {
+  list: () => request<SequenceStatsBrief[]>("GET", "/sequence-stats"),
+  get: (id: string) => request<SequenceStatsDetail>("GET", `/sequence-stats/${id}`),
+  start: (oracle: string | null, postgres: string | null) =>
+    request<SequenceStatsBrief>("POST", "/sequence-stats", { oracle_connection_id: oracle, postgres_connection_id: postgres }),
+  fixUrl: (id: string) => `/api/sequence-stats/${id}/fix.sql`,
 };

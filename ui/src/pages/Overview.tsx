@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { api } from "../api";
 import { ErrorBanner, PageHeader } from "../components/ui";
+import DbStatistics from "./overview/DbStatistics";
 
 export default function OverviewPage() {
   const system = useQuery({ queryKey: ["system"], queryFn: api.system });
@@ -25,7 +26,7 @@ export default function OverviewPage() {
 
   return (
     <>
-      <PageHeader title="Overview" subtitle="Connect your databases and verify the conversion toolchain." />
+      <PageHeader title="Overview" subtitle="Your connected databases at a glance, and the conversion toolchain." />
       <ErrorBanner error={system.error ?? health.error} />
 
       <section className="cards">
@@ -54,6 +55,8 @@ export default function OverviewPage() {
           </div>
         </div>
       </section>
+
+      <DbStatistics connections={conns} />
 
       <section className="card">
         <h2>Getting started</h2>

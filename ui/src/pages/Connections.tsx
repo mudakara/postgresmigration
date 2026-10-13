@@ -12,12 +12,63 @@ function emptyForm(kind: DbKind = "oracle"): ConnectionInput {
   return { name: "", kind, host: "", port: DEFAULT_PORT[kind], database: "", username: "", password: "", options: {} };
 }
 
-function cleanOptions(form: ConnectionInput) {
-  return form.kind === "oracle"
-    ? { use_sid: !!form.options.use_sid }
+export function parseSchemas(text: string): string[] {
+  return [...new Set(text.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean))];
+}
+
+function cleanOptions(form: ConnectionInput, schemasText: string) {
+  const schemas = parseSchemas(schemasText).map((s) => (form.kind === "oracle" ? s.toUpperCase() : s));
+  const base = form.kind === "oracle"
+    ? { use_sid: !!form.options.use_sid, ...(form.options.user_grants != null ? { user_grants: form.options.user_grants } : {}) }
     : form.options.sslmode
       ? { sslmode: form.options.sslmode }
       : {};
+  return { ...base, schemas };
+}
+
+/** Ora2Pg migrates each Oracle package into a PostgreSQL schema of the same name: offer to
+ * add those to a PostgreSQL connection's scope. */
+function PackageSchemas({ pgId, onAdd }: { pgId: string; onAdd: (names: string[]) => void }) {
+  const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections });
+  const oracles = (connections.data ?? []).filter((c) => c.kind === "oracle");
+  const [oracleId, setOracleId] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const chosen = oracleId || oracles[0]?.id || "";
+  const load = useMutation({
+    mutationFn: () => api.packageSchemas(pgId, chosen),
+    onSuccess: (r) => {
+      onAdd(r.schemas);
+      setNote(`Added ${r.schemas.length} schema(s) for ${r.oracle_packages} Oracle package name(s)`
+        + (r.not_found.length ? `; ${r.not_found.length} have no schema here (${r.not_found.slice(0, 5).join(", ")}${r.not_found.length > 5 ? ", …" : ""})` : "") + ". Save to keep them.");
+    },
+  });
+  if (!oracles.length) return null;
+  return (
+    <div className="span-2 package-schemas small">
+      <span>Ora2Pg puts each Oracle package in a PostgreSQL schema of the same name.</span>
+      {oracles.length > 1 && (
+        <select value={chosen} onChange={(e) => setOracleId(e.target.value)} aria-label="Oracle connection">
+          {oracles.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      )}
+      <button type="button" className="btn btn-sm" onClick={() => load.mutate()} disabled={load.isPending || !chosen}>
+        {load.isPending ? "Looking…" : `Add schemas for ${oracles.length === 1 ? oracles[0].name : "the Oracle"} packages`}
+      </button>
+      {note && <span className="sev-ok">{note}</span>}
+      <ErrorBanner error={load.error} />
+    </div>
+  );
+}
+
+function ScopeSummary({ conn }: { conn: Connection }) {
+  const schemas = conn.options.schemas ?? [];
+  if (!schemas.length) return <div className="muted small">Scope: all schemas</div>;
+  return (
+    <div className="small" title={schemas.join(", ")}>
+      Scope: <strong>{schemas.length}</strong> schema{schemas.length === 1 ? "" : "s"}{" "}
+      <span className="muted">({schemas.slice(0, 5).join(", ")}{schemas.length > 5 ? ", …" : ""})</span>
+    </div>
+  );
 }
 
 function CapabilitySummary({ conn }: { conn: Connection }) {
@@ -51,6 +102,7 @@ function ConnectionForm({ editing, onDone }: { editing: Connection | null; onDon
       : emptyForm(),
   );
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [schemasText, setSchemasText] = useState((editing?.options.schemas ?? []).join(", "));
 
   const set = <K extends keyof ConnectionInput>(key: K, value: ConnectionInput[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
@@ -58,7 +110,7 @@ function ConnectionForm({ editing, onDone }: { editing: Connection | null; onDon
   };
 
   const payload = (): ConnectionInput => {
-    const body: ConnectionInput = { ...form, port: Number(form.port), options: cleanOptions(form) };
+    const body: ConnectionInput = { ...form, port: Number(form.port), options: cleanOptions(form, schemasText) };
     if (!body.password) delete body.password;
     return body;
   };
@@ -163,6 +215,17 @@ function ConnectionForm({ editing, onDone }: { editing: Connection | null; onDon
         )}
       </div>
 
+      {!isOracle && editing && <PackageSchemas pgId={editing.id} onAdd={(names) => setSchemasText((t) => [...parseSchemas(t), ...names.filter((n) => !parseSchemas(t).includes(n))].join(", "))} />}
+      <label className="span-2">
+        Schemas in scope
+        <textarea rows={2} value={schemasText} onChange={(e) => setSchemasText(e.target.value)}
+          placeholder={isOracle ? "e.g. SALES, BILLING (comma or one per line). Empty: every schema the account can see" : "e.g. sales, billing. Empty: every user schema"} />
+        <span className="muted small" style={{ fontWeight: 400 }}>
+          Every feature uses only these schemas: scans, comparisons, Schema explorer, Table compare, statistics and the sequence check.
+          {parseSchemas(schemasText).length > 0 && ` ${parseSchemas(schemasText).length} schema(s).`}
+        </span>
+      </label>
+
       {isOracle && (
         <p className="muted small">
           Use a read-only account: <code>CREATE SESSION</code> plus <code>SELECT ANY DICTIONARY</code> (or{" "}
@@ -254,6 +317,7 @@ export default function ConnectionsPage() {
                   <td>
                     <div className="cell-title">{conn.name} <KindTag kind={conn.kind} /></div>
                     <CapabilitySummary conn={conn} />
+                    <ScopeSummary conn={conn} />
                   </td>
                   <td className="mono small">
                     {conn.username}@{conn.host}:{conn.port}/{conn.database}

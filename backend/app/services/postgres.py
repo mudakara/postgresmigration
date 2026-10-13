@@ -7,10 +7,17 @@ from app.services.endpoints import Endpoint, ProbeResult
 TRACKED_EXTENSIONS = ["plpgsql_check", "orafce", "pg_stat_statements"]
 
 
+LOCK_TIMEOUT = "5s"
+
+
 def connect(endpoint: Endpoint, **kwargs) -> psycopg.Connection:
     """Open a session in which every transaction is read-only: writes fail with
     "cannot execute ... in a read-only transaction". Set at startup, so it holds in
-    autocommit mode and for every transaction on the connection."""
+    autocommit mode and for every transaction on the connection.
+
+    The session also never waits long for a lock: when another session holds or is
+    waiting for an exclusive lock (DDL, VACUUM FULL...), a statement that needs that
+    table fails after LOCK_TIMEOUT instead of queueing, where it could hold up the DDL."""
     return psycopg.connect(
         host=endpoint.host,
         port=endpoint.port,
@@ -20,7 +27,7 @@ def connect(endpoint: Endpoint, **kwargs) -> psycopg.Connection:
         sslmode=endpoint.options.get("sslmode") or "prefer",
         connect_timeout=get_settings().connect_timeout_seconds,
         application_name="migration-studio",
-        options="-c default_transaction_read_only=on",
+        options=f"-c default_transaction_read_only=on -c lock_timeout={LOCK_TIMEOUT}",
         **kwargs,
     )
 

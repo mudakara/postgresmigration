@@ -26,6 +26,9 @@ class ConnectionOptions(BaseModel):
     user_grants: bool | None = None
     # Postgres only.
     sslmode: Literal["disable", "allow", "prefer", "require", "verify-ca", "verify-full"] | None = None
+    # Schemas in scope for every feature (scan, comparison, explorer, sequence check...).
+    # Empty: every user schema the account can see.
+    schemas: list[SchemaName] = Field(default_factory=list, max_length=500)
 
 
 class EndpointFields(BaseModel):

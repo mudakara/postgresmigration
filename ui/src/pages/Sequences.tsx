@@ -230,7 +230,7 @@ export default function SequencesPage() {
             <div className="explorer-bar-row">
               <label className="explorer-schemas small">
                 Schemas
-                <input value={schemas} onChange={(e) => setSchemas(e.target.value)} placeholder="All schemas (or e.g. sales, billing)" disabled={!!active} />
+                <input value={schemas} onChange={(e) => setSchemas(e.target.value)} placeholder="Empty: the connection's schema scope (or e.g. sales, billing)" disabled={!!active} />
               </label>
               <label className="explorer-schemas small">
                 Also compare with Oracle (optional)

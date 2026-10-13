@@ -8,6 +8,7 @@ from app import jobs
 from app.db import get_db
 from app.models import Project, Scan, ScanStatus
 from app.schemas import ScanCreate, ScanRead
+from app.services.endpoints import scoped_schemas
 
 router = APIRouter(tags=["scans"])
 
@@ -24,7 +25,11 @@ def start_scan(project_id: uuid.UUID, body: ScanCreate | None = None, db: Sessio
         raise HTTPException(status.HTTP_409_CONFLICT, "A scan is already in progress for this project")
 
     body = body or ScanCreate()
-    scan = Scan(project_id=project_id, include_ora2pg_cost=body.include_ora2pg_cost, schemas=project.schemas)
+    try:
+        schemas = scoped_schemas(project.oracle_connection, project.schemas)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    scan = Scan(project_id=project_id, include_ora2pg_cost=body.include_ora2pg_cost, schemas=schemas)
     db.add(scan)
     db.flush()
     job = jobs.create_job(db, "scan", params={"scan_id": str(scan.id)}, project_id=project_id,

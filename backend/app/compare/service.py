@@ -18,7 +18,7 @@ from app.compare.units import OracleUnit, load_units
 from app.config import get_settings
 from app.jobs.registry import JobContext
 from app.models import ComparisonRun, ObjectDependency, ObjectPair, Project, Scan, ScanStatus, TargetObject
-from app.services.endpoints import Endpoint
+from app.services.endpoints import Endpoint, scoped_schemas
 
 SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1, "none": 0}
 
@@ -162,7 +162,7 @@ def run_comparison(ctx: JobContext, run_id: uuid.UUID) -> dict[str, Any]:
     run.started_at = datetime.now(UTC)
     session.commit()
 
-    target_schemas = (project.settings or {}).get("target_schemas") or []
+    target_schemas = scoped_schemas(project.postgres_connection, (project.settings or {}).get("target_schemas") or [])
     ctx.progress(0.05, f"Connecting to PostgreSQL ({project.postgres_connection.name})")
     target_endpoint = Endpoint.from_connection(project.postgres_connection)
     catalog = read_catalog(target_endpoint, target_schemas, progress=ctx.progress)

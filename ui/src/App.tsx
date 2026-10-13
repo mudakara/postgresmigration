@@ -10,6 +10,7 @@ import OverviewPage from "./pages/Overview";
 import PairDetailPage from "./pages/PairDetail";
 import ProjectDetailPage from "./pages/ProjectDetail";
 import ProjectsPage from "./pages/Projects";
+import SequenceStatsPage from "./pages/SequenceStats";
 import SequencesPage from "./pages/Sequences";
 import TableComparePage from "./pages/TableCompare";
 
@@ -19,6 +20,7 @@ const NAV = [
   { to: "/explorer", label: "Schema explorer", end: false },
   { to: "/compare", label: "Table compare", end: false },
   { to: "/sequences", label: "Sequence check", end: false },
+  { to: "/sequence-stats", label: "Sequence statistics", end: false },
   { to: "/projects", label: "Projects", end: false },
   { to: "/jobs", label: "Jobs" },
 ];
@@ -57,6 +59,7 @@ export default function App() {
           <Route path="/explorer/:connectionId" element={<ExplorerPage />} />
           <Route path="/compare" element={<TableComparePage />} />
           <Route path="/sequences" element={<SequencesPage />} />
+          <Route path="/sequence-stats" element={<SequenceStatsPage />} />
           <Route path="/sequences/:connectionId" element={<SequencesPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:projectId" element={<ProjectDetailPage />} />

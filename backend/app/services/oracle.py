@@ -97,6 +97,15 @@ class ReadOnlyConnection:
     def cursor(self) -> ReadOnlyCursor:
         return ReadOnlyCursor(self._conn.cursor())
 
+    @property
+    def call_timeout(self) -> int:
+        """Milliseconds a single database round trip may take (0: no limit)."""
+        return self._conn.call_timeout
+
+    @call_timeout.setter
+    def call_timeout(self, ms: int) -> None:
+        self._conn.call_timeout = ms
+
     def commit(self):
         raise ReadOnlyViolation("Oracle connections are read-only; commit is not allowed")
 

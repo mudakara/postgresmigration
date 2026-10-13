@@ -97,7 +97,7 @@ def execute_job(job_id: uuid.UUID, session_factory: sessionmaker[Session]) -> No
             session.rollback()
             job = session.get(Job, job_id)
             job.status = JobStatus.FAILED
-            job.error = f"{type(exc).__name__}: {exc}"[:4000]
+            job.error = _describe(exc)[:4000]
             job.log = ((job.log or "") + traceback.format_exc())[-LOG_LIMIT:]
         else:
             job.status = JobStatus.SUCCEEDED
@@ -108,11 +108,20 @@ def execute_job(job_id: uuid.UUID, session_factory: sessionmaker[Session]) -> No
         session.commit()
 
 
+def _describe(exc: Exception) -> str:
+    if type(exc).__name__ == "LockNotAvailable":  # psycopg: our lock_timeout expired
+        return ("LockNotAvailable: another session is changing a table this job needs (an exclusive lock is held, "
+                "e.g. DDL or maintenance in progress), so the job stopped rather than wait. Try again when it has finished.")
+    return f"{type(exc).__name__}: {exc}"
+
+
 def fail_interrupted_jobs(session_factory: sessionmaker[Session]) -> int:
     """Mark jobs left RUNNING by a worker that stopped (restart, crash) as failed, together
     with the scan, comparison or catalog snapshot they were driving. Call when a worker
     starts, before it takes new work: no job can genuinely be running at that point."""
-    from app.models import CatalogPerfReview, CatalogSnapshot, ComparisonRun, Scan, ScanStatus, SequenceCheck
+    from app.models import (
+        CatalogPerfReview, CatalogSnapshot, ComparisonRun, Scan, ScanStatus, SequenceCheck, SequenceStats,
+    )
 
     now = datetime.now(UTC)
     reason = "Interrupted: the worker stopped while this job was running. Start it again."
@@ -122,7 +131,7 @@ def fail_interrupted_jobs(session_factory: sessionmaker[Session]) -> int:
             job.status = JobStatus.FAILED
             job.error = reason
             job.finished_at = now
-            for model in (Scan, ComparisonRun, CatalogSnapshot, CatalogPerfReview, SequenceCheck):
+            for model in (Scan, ComparisonRun, CatalogSnapshot, CatalogPerfReview, SequenceCheck, SequenceStats):
                 for row in session.scalars(select(model).where(
                     model.job_id == job.id, model.status.in_([ScanStatus.QUEUED, ScanStatus.RUNNING])
                 )):

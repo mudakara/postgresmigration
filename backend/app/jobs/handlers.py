@@ -146,3 +146,23 @@ def sequence_check(ctx: JobContext) -> dict[str, Any]:
             failed.finished_at = datetime.now(UTC)
             ctx.session.commit()
         raise
+
+
+@job_handler("sequence_stats")
+def sequence_stats(ctx: JobContext) -> dict[str, Any]:
+    """Per-schema sequence statistics on Oracle and PostgreSQL, compared table by table."""
+    from app.models import SequenceStats
+    from app.sequences.service import run_stats
+
+    stats_id = uuid.UUID(ctx.job.params["stats_id"])
+    try:
+        return run_stats(ctx, stats_id)
+    except Exception as exc:
+        ctx.session.rollback()
+        failed = ctx.session.get(SequenceStats, stats_id)
+        if failed is not None:
+            failed.status = ScanStatus.FAILED
+            failed.error = f"{type(exc).__name__}: {exc}"[:4000]
+            failed.finished_at = datetime.now(UTC)
+            ctx.session.commit()
+        raise

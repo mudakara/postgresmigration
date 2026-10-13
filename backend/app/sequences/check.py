@@ -15,6 +15,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
@@ -57,6 +58,7 @@ class SequenceState:
     last_value: int | None
     is_called: bool | None
     can_read: bool
+    locked: bool = False  # held exclusively by another session while checking
     columns: list[ColumnLink] = field(default_factory=list)
     oracle: dict[str, Any] | None = None  # {owner, name, last_number}
     next_value: int | None = None
@@ -226,13 +228,24 @@ def _read_sequence_values(conn, seqs: dict[int, SequenceState]) -> None:
     """last_value and is_called straight from each sequence. pg_sequences can't be used:
     it shows NULL both for a sequence never used and for one reset with setval(..., false)."""
     readable = [(oid, s) for oid, s in seqs.items() if s.can_read]
-    for i in range(0, len(readable), 100):
-        chunk = readable[i:i + 100]
-        query = sql.SQL(" UNION ALL ").join(
+    def query(chunk):
+        return sql.SQL(" UNION ALL ").join(
             sql.SQL("SELECT {}::bigint AS oid, last_value, is_called FROM {}.{}").format(
                 sql.Literal(oid), sql.Identifier(s.schema), sql.Identifier(s.name))
             for oid, s in chunk)
-        for r in conn.execute(query):
+
+    for i in range(0, len(readable), 100):
+        chunk = readable[i:i + 100]
+        try:
+            rows = conn.execute(query(chunk)).fetchall()
+        except psycopg.errors.LockNotAvailable:  # one of them is locked: read them one by one
+            rows = []
+            for item in chunk:
+                try:
+                    rows += conn.execute(query([item])).fetchall()
+                except psycopg.errors.LockNotAvailable:
+                    item[1].locked = True
+        for r in rows:
             seqs[r["oid"]].last_value, seqs[r["oid"]].is_called = r["last_value"], r["is_called"]
 
 
@@ -326,7 +339,9 @@ def evaluate(seqs: list[SequenceState], oracle_seqs: list[dict[str, Any]] | None
             candidates.append(s.oracle["last_number"])
         s.needed_next = max(candidates) if candidates else None
 
-        if not s.can_read:
+        if s.locked:
+            s.status, s.message = "check_failed", "Locked by another session while checking (e.g. ALTER SEQUENCE): check again later."
+        elif not s.can_read:
             s.status, s.message = "no_privilege", "This login has no SELECT privilege on the sequence, so its value can't be read."
         elif s.increment < 0:
             s.status, s.message = "descending", "Descending sequence: check it manually."

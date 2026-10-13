@@ -153,3 +153,35 @@ def start_ora2pg_check(connection_id: uuid.UUID, db: Session = Depends(get_db)):
     job = jobs.create_job(db, "ora2pg_check", connection_id=conn.id)
     jobs.enqueue(job)
     return job
+
+
+@router.get("/{connection_id}/package-schemas")
+def package_schemas(connection_id: uuid.UUID, oracle_connection_id: uuid.UUID, db: Session = Depends(get_db)):
+    """PostgreSQL schemas named after the Oracle connection's packages. Ora2Pg migrates
+    each package into a schema of that name, so these belong in the PostgreSQL scope
+    next to the Oracle schemas themselves. Reads the Oracle catalog snapshot and checks
+    which schemas exist (read-only)."""
+    from psycopg.rows import dict_row
+
+    from app.models import CatalogCode, CatalogSnapshot
+    from app.services import postgres
+
+    pg = _get_or_404(db, connection_id)
+    ora = _get_or_404(db, oracle_connection_id)
+    if pg.kind is not DbKind.POSTGRES or ora.kind is not DbKind.ORACLE:
+        raise HTTPException(422, "Pass a PostgreSQL connection and an Oracle connection")
+    snapshot = db.scalars(select(CatalogSnapshot).where(
+        CatalogSnapshot.connection_id == ora.id, CatalogSnapshot.status == "succeeded"
+    ).order_by(CatalogSnapshot.created_at.desc())).first()
+    if snapshot is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Read the catalog of {ora.name} first (Schema explorer)")
+    packages = sorted({name.lower() for (name,) in db.execute(
+        select(CatalogCode.name).where(CatalogCode.snapshot_id == snapshot.id, CatalogCode.kind == "package"))})
+    try:
+        with postgres.connect(Endpoint.from_connection(pg), autocommit=True, row_factory=dict_row) as conn:
+            existing = {r["nspname"] for r in conn.execute(
+                "SELECT nspname FROM pg_namespace WHERE nspname = ANY(%s)", [packages])}
+    except Exception as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Could not read {pg.name}: {type(exc).__name__}: {exc}"[:500]) from exc
+    return {"oracle_packages": len(packages), "schemas": sorted(existing),
+            "not_found": [p for p in packages if p not in existing]}

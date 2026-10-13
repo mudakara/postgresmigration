@@ -31,6 +31,29 @@ class Endpoint:
         )
 
 
+def schema_scope(conn: Connection) -> list[str]:
+    """The connection's schemas in scope (upper case for Oracle); empty means all."""
+    names = [s for s in (conn.options or {}).get("schemas") or [] if s]
+    return [s.upper() for s in names] if conn.kind is DbKind.ORACLE else names
+
+
+def scoped_schemas(conn: Connection, requested: list[str] | None) -> list[str]:
+    """Schemas a feature should read: the requested ones limited to the connection's
+    scope, or the whole scope when nothing specific is requested."""
+    scope = schema_scope(conn)
+    wanted = [s.upper() if conn.kind is DbKind.ORACLE else s for s in requested or []]
+    if not scope:
+        return wanted
+    if not wanted:
+        return scope
+    allowed = {s.lower() for s in scope}
+    inside = [s for s in wanted if s.lower() in allowed]
+    if not inside:
+        raise ValueError(f"None of {', '.join(wanted)} is in the schema scope of connection {conn.name}: "
+                         f"{', '.join(scope)}. Edit the connection to change its scope.")
+    return inside
+
+
 def use_user_grants(conn: Connection) -> bool:
     """Whether to read ALL_* instead of DBA_* views (Ora2Pg's USER_GRANTS): an explicit
     connection option wins, otherwise follow what the last connection test found."""

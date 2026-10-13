@@ -34,6 +34,7 @@ from app.schemas import (
     PerfReviewRequest,
     PerfReviewState,
 )
+from app.services.endpoints import scoped_schemas
 
 router = APIRouter(tags=["schema explorer"])
 
@@ -64,9 +65,10 @@ def start_snapshot(connection_id: uuid.UUID, body: CatalogSnapshotCreate | None 
     )).first()
     if active is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "The catalog of this connection is already being read")
-    schemas = (body or CatalogSnapshotCreate()).schemas
-    if conn.kind is DbKind.ORACLE:
-        schemas = [s.upper() for s in schemas]
+    try:
+        schemas = scoped_schemas(conn, (body or CatalogSnapshotCreate()).schemas)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     snapshot = CatalogSnapshot(connection_id=conn.id, requested_schemas=list(dict.fromkeys(schemas)))
     db.add(snapshot)
     db.flush()
@@ -416,6 +418,28 @@ def compare_tables(left: uuid.UUID, right: uuid.UUID, db: Session = Depends(get_
     return {"left": sides[0], "right": sides[1], "names": names, **result}
 
 
+_INVENTORY_CACHE: dict[tuple[uuid.UUID, uuid.UUID], dict] = {}
+
+
+@router.get("/catalog-compare/inventory")
+def compare_inventory(left_snapshot: uuid.UUID, right_snapshot: uuid.UUID, db: Session = Depends(get_db)):
+    """Area by area (tables, views, columns, indexes, foreign keys, procedures, functions,
+    triggers): how many match, and what exists only on one side. Cached per pair."""
+    from app.catalog.inventory_diff import diff
+
+    key = (left_snapshot, right_snapshot)
+    if key not in _INVENTORY_CACHE:
+        left = _get_or_404(db, CatalogSnapshot, left_snapshot, "Snapshot")
+        right = _get_or_404(db, CatalogSnapshot, right_snapshot, "Snapshot")
+        names, kinds = _side_names(db, left, right)
+        result = {"names": names, "kinds": kinds,
+                  "connections": [str(left.connection_id), str(right.connection_id)], **diff(db, left.id, right.id)}
+        if len(_INVENTORY_CACHE) >= 6:
+            _INVENTORY_CACHE.pop(next(iter(_INVENTORY_CACHE)))
+        _INVENTORY_CACHE[key] = result
+    return _INVENTORY_CACHE[key]
+
+
 _ROUTINE_CACHE: dict[tuple[uuid.UUID, uuid.UUID], dict] = {}
 
 
@@ -439,3 +463,35 @@ def compare_routines_of_table(left: uuid.UUID, right: uuid.UUID, db: Session = D
             _ROUTINE_CACHE.pop(next(iter(_ROUTINE_CACHE)))
         _ROUTINE_CACHE[key] = result
     return _ROUTINE_CACHE[key]
+
+
+# --- statistics (Overview page) -----------------------------------------------------------
+
+
+@router.get("/catalog-snapshots/{snapshot_id}/stats")
+def snapshot_stats(snapshot_id: uuid.UUID, db: Session = Depends(get_db)):
+    """How many tables, views, columns, indexes, foreign keys, procedures, functions,
+    packages and triggers the snapshot holds, overall and per schema."""
+    from app.catalog import stats
+
+    _get_or_404(db, CatalogSnapshot, snapshot_id, "Snapshot")
+    return stats.summary(db, snapshot_id)
+
+
+@router.get("/catalog-snapshots/{snapshot_id}/stats/{area}")
+def snapshot_stats_items(
+    snapshot_id: uuid.UUID,
+    area: Literal["tables", "views", "columns", "indexes", "foreign_keys", "procedures", "functions",
+                  "trigger_functions", "packages", "triggers", "invalid_code"],
+    schema: str | None = None,
+    q: str | None = Query(default=None, max_length=200),
+    filter: str | None = Query(default=None, max_length=40),
+    limit: int = Query(default=200, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """The items behind one count, for the Overview drill-down."""
+    from app.catalog import stats
+
+    _get_or_404(db, CatalogSnapshot, snapshot_id, "Snapshot")
+    return stats.drill(db, snapshot_id, area, schema=schema, q=q, filter_=filter, limit=limit, offset=offset)

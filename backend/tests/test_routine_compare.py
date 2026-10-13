@@ -80,3 +80,22 @@ def test_endpoint_compares_routines_of_a_table_pair(client, session_factory, sho
     assert close["status"] == "error"
     assert result["routines"][0]["status"] == "error"  # problems first
     assert uuid.UUID(close["right"]["code_id"])
+
+
+def test_inventory_diff_counts_package_members_and_shared_package_schemas():
+    from app.catalog.inventory_diff import _match, _routine_keys
+
+    oracle = [
+        {"name": "A.PKG.RUN", "kind": "procedure", "schema": "A", "package": "PKG", "member": "RUN"},
+        {"name": "B.PKG.RUN", "kind": "procedure", "schema": "B", "package": "PKG", "member": "RUN"},  # same package name
+        {"name": "A.SOLO", "kind": "function", "schema": "A", "package": None, "member": None, "plain": "SOLO"},
+        {"name": "A.GONE", "kind": "procedure", "schema": "A", "package": None, "member": None, "plain": "GONE"},
+    ]
+    pg = [
+        {"name": "pkg.run", "kind": "procedure", "schema": "pkg", "package": None, "member": None, "plain": "run"},
+        {"name": "a.solo", "kind": "function", "schema": "a", "package": None, "member": None, "plain": "solo"},
+        {"name": "a.extra", "kind": "function", "schema": "a", "package": None, "member": None, "plain": "extra"},
+    ]
+    pairs, only_left, only_right = _match(oracle, pg, _routine_keys, _routine_keys, exclusive=False)
+    assert len(pairs) == 3  # both PKG.RUN members find pkg.run
+    assert [r["name"] for r in only_left] == ["A.GONE"] and [r["name"] for r in only_right] == ["a.extra"]

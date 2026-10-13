@@ -159,3 +159,23 @@ class SequenceCheck(UuidPkMixin, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SequenceStats(UuidPkMixin, Base):
+    """Per-schema sequence statistics on Oracle and/or PostgreSQL, and a table-by-table
+    comparison of the two (Sequence statistics page)."""
+
+    __tablename__ = "sequence_stats"
+
+    oracle_connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("connections.id", ondelete="CASCADE"), index=True)
+    postgres_connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("connections.id", ondelete="CASCADE"), index=True)
+    job_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"))
+    status: Mapped[ScanStatus] = mapped_column(str_enum(ScanStatus), default=ScanStatus.QUEUED)
+    result: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    summary: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    warnings: Mapped[list[Any]] = mapped_column(default=list)
+    error: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

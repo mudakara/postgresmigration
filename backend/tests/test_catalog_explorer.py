@@ -232,3 +232,55 @@ def test_overview_compares_every_table(client, session_factory, shop_db):
     assert rows["shop.orders"]["status"] in ("same", "info")
     assert result["summary"]["only_right"] == 1 and result["summary"]["with_problems"] == 1
     assert result["tables"][0]["status"] == "error"  # problems first
+
+
+def test_statistics_and_drill_down(client, session_factory, shop_db):
+    conn = client.post("/api/connections", json=endpoint_payload(shop_db, "shop")).json()
+    snap = snapshot(client, session_factory, conn["id"])
+    stats = client.get(f"/api/catalog-snapshots/{snap['id']}/stats").json()
+    t = stats["totals"]
+    assert (t["tables"], t["views"], t["procedures"], t["functions"], t["trigger_functions"], t["triggers"]) == (4, 1, 1, 0, 1, 2)
+    assert t["foreign_keys"] == 2 and t["columns"] == 14  # columns of tables only
+    assert stats["extras"]["partitioned_tables"] == 1 and stats["extras"]["unindexed_foreign_keys"] == 1
+    assert stats["by_schema"][0]["schema"] == "shop"
+
+    def drill(area, **params):
+        return client.get(f"/api/catalog-snapshots/{snap['id']}/stats/{area}", params=params).json()
+
+    fks = drill("foreign_keys", filter="unindexed")
+    assert fks["total"] == 1 and fks["items"][0]["table"] == "orders"
+    cols = drill("columns", filter="indexed", q="customers")
+    assert {c["name"] for c in cols["items"]} == {"id", "email", "name"}  # pkey, unique, lower(name) index
+    trig = drill("triggers")
+    assert {r["name"] for r in trig["items"]} == {"orders_audit", "events_2026_only"}
+    assert drill("tables", filter="without_pk")["total"] == 1  # events
+    assert client.get(f"/api/catalog-snapshots/{snap['id']}/stats/nonsense").status_code == 422
+
+
+def test_catalog_read_does_not_wait_behind_ddl(client, session_factory, shop_db):
+    """Another session holding an exclusive lock on a partition (DDL in progress) must not
+    block the read: it uses no table locks, and any that a query needs time out quickly."""
+    import time
+
+    ep = shop_db
+    locker = psycopg.connect(host=ep.host, port=ep.port, user=ep.username, password=ep.password, dbname=ep.database)
+    try:
+        # Held until rollback: a partition, and a table with a default, indexes and a trigger.
+        locker.execute("LOCK TABLE shop.events_2026, shop.orders IN ACCESS EXCLUSIVE MODE")
+        conn = client.post("/api/connections", json=endpoint_payload(shop_db, "shop")).json()
+        started = time.monotonic()
+        snap = snapshot(client, session_factory, conn["id"])
+        assert time.monotonic() - started < 20
+        assert any("locked by another session" in w and "shop.orders" in w for w in snap["warnings"])
+        tables = tables_by_name(client, snap["id"])
+        assert tables["events"]["partitions"] == 2
+        orders = client.get(f"/api/catalog-tables/{tables['orders']['id']}").json()
+        assert orders["indexes"][0]["columns"] == ["id"]  # key columns still read from pg_attribute
+        assert orders["references"][0]["other_label"] == "shop.customers"
+        assert "not read" in client.get(f"/api/catalog-code/{orders['triggers'][0]['id']}").json()["source"]
+        # Everything else is complete.
+        customers = client.get(f"/api/catalog-tables/{tables['customers']['id']}").json()
+        assert any(ix["columns"] == ["lower(name)"] for ix in customers["indexes"])
+    finally:
+        locker.rollback()
+        locker.close()

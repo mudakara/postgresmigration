@@ -16,7 +16,7 @@ from app.scan.cost_report import SchemaCost, run_schema_report
 from app.scan.extract import DictionaryReader, ExtractedObject, Extraction
 from app.scan.rules import Analysis, analyze, complexity_tier, mark_calls_unsafe, sys_packages
 from app.services import oracle
-from app.services.endpoints import Endpoint, use_user_grants
+from app.services.endpoints import Endpoint, scoped_schemas, use_user_grants
 
 # Ora2Pg omits views from its per-object list when they need no rewriting; it still
 # counts each one at this base score.
@@ -310,7 +310,7 @@ def run_scan(ctx: JobContext, scan_id: uuid.UUID) -> dict[str, Any]:
 
     ctx.progress(0.03, f"Connecting to Oracle ({conn.name})")
     with oracle.connect(endpoint) as oracle_conn:
-        extraction = DictionaryReader(oracle_conn, dictionary).extract(project.schemas, ctx.progress)
+        extraction = DictionaryReader(oracle_conn, dictionary).extract(scoped_schemas(conn, project.schemas), ctx.progress)
     if extraction.missing_schemas:
         warnings.append(f"Schemas not found in Oracle: {', '.join(extraction.missing_schemas)}")
     ctx.log(

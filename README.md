@@ -10,6 +10,7 @@ The app only **reads** the databases you connect to (sessions are read-only; see
 
 | Page | Use it to… |
 |---|---|
+| **Overview** | See every connected database's statistics side by side: tables, views, columns, indexes, foreign keys, procedures, functions, packages and triggers, plus tables without a primary key, foreign keys without an index, invalid code and disabled triggers. Click a number to list those items, filter by schema, and open any of them in the Schema explorer. |
 | **Connections** | Save Oracle and PostgreSQL connections (passwords are encrypted), test them, and check what the account can see. |
 | **Projects → Scan & report** | Inventory every PL/SQL object in Oracle, flag risky constructs, and estimate the migration effort (Ora2Pg cost + the app's own rules). |
 | **Projects → Comparison** | For an existing migration: pair every Oracle routine, view and trigger with its PostgreSQL counterpart, compare signatures, run static pitfall checks and `plpgsql_check`, and optionally have Claude review each pair. |
@@ -104,7 +105,16 @@ All settings live in `.env` (see [.env.example](.env.example)):
 Open **Connections → New connection** and add your Oracle database (host, port, service name, username, password) and your PostgreSQL database (host, port, **database name**, username, password). Click **Test** on each.
 - The Oracle test reports whether the account can read the `DBA_*` dictionary views. Without them only objects granted to the account are visible, and scans are slower and incomplete.
 - For PostgreSQL, make sure the database is the one holding the migrated schemas, not the server's default `postgres` database.
+- **Schemas in scope:** list the schemas the application should work with. Every feature then uses only those: scans, the comparison, the Schema explorer, Table compare, the Overview statistics, the sequence check and the AI reviews. This matters with an admin account that can see every schema. A project or page can narrow it further, but never go outside it. Leave it empty to use every user schema. After changing it, use **Refresh catalog**, and re-run scans, so existing results follow the new scope.
 - The containers resolve hosts themselves: for a database running on your own machine use `host.docker.internal`, not `localhost`.
+
+### Database statistics on the Overview page
+
+Once a connection's catalog has been read (Schema explorer, or **Read catalog** on its Overview card), the Overview page shows its counts. Oracle package members are counted as procedures and functions too, with the split shown (e.g. "388 standalone · 570 in 139 packages").
+
+**Oracle vs PostgreSQL differences**, below the cards, compares an Oracle catalog with a PostgreSQL one area by area: tables, views, columns, indexes, foreign keys, procedures, functions and triggers. For each area it shows how many match, how many exist **only in Oracle** (missing in PostgreSQL) and **only in PostgreSQL**. Click a count to list those items, filter them, download them as CSV, or open them in the Schema explorer or Table compare.
+- **Matching rules:** columns, indexes and foreign keys are compared inside the tables that exist on both sides. Procedures and functions are matched across the migration (`PKG.MEMBER` ↔ `pkg.member`); one that changed kind, such as a procedure that became a function, counts as matched and is listed separately.
+- **PostgreSQL scope for packages:** Ora2Pg moves each Oracle package into a PostgreSQL schema of the same name, so a PostgreSQL connection's scope must include those schemas. **Add schemas for Oracle packages** on its edit form adds them. Click any count, for example **Indexes** or **Foreign keys → without an index**, to list those items below. Narrow the list by schema, filter or search, and click a name to open it in the Schema explorer. **Refresh** on a card reads the catalog again.
 
 ### 2. Assess the Oracle code (Scenario 1)
 
@@ -385,6 +395,24 @@ Data loaded from Oracle keeps its key values, but the PostgreSQL sequences that 
   psql -h <host> -p <port> -d <database> -U <sequence owner> -f fix_sequences.sql
   ```
 
+**Sequence statistics** (left menu) looks at sequences schema by schema, on Oracle, PostgreSQL or both (choose either or both connections, then **Analyse sequences**):
+- **By schema:** how many sequences each schema has, and whether each one fills tables of its own schema, **fills tables of another schema** (flagged, e.g. a sequence in SALES used for a BILLING table), is only used by code, or is unused. Click a schema to list its sequences.
+- **Finding the tables a sequence fills on Oracle:**
+  - identity columns;
+  - triggers that set `:NEW.ID := SEQ.NEXTVAL` or run `SELECT SEQ.NEXTVAL INTO :NEW.ID FROM DUAL`;
+  - `INSERT … VALUES (SEQ.NEXTVAL, …)` in procedures and packages;
+  - Oracle's dependency views, for code that uses a sequence.
+
+  PostgreSQL is analysed as in the Sequence check.
+- **Table by table** (with both connections): for every column filled by a sequence, the Oracle sequence's `LAST_NUMBER` and `MAX()` of the data next to the PostgreSQL sequence's next value and `MAX()`. Highlighted when:
+  - the PostgreSQL sequence is behind the data (next insert fails);
+  - it is behind Oracle's value;
+  - no sequence fills the column in PostgreSQL;
+  - PostgreSQL holds less data than Oracle.
+
+  It can be downloaded as CSV, along with a fix script for the PostgreSQL sequences.
+- **Not linked to a column:** Oracle sequences no column was found for, compared with PostgreSQL by name.
+
 **Without the app:** [scripts/postgres/fix_sequences.sql](scripts/postgres/fix_sequences.sql) does the same directly in psql for identity/serial columns, defaults and trigger-filled columns. It doesn't cover INSERT statements in procedures; use the check page for those. Dry run first (it only reports), then apply:
 
 ```bash
@@ -417,6 +445,7 @@ The `api` and `worker` containers must be able to reach the database host. Insid
     - Each session starts with `SET TRANSACTION READ ONLY`, so DML fails with ORA-01456.
     - Every statement passes through a guard that only sends `SELECT`/`WITH` queries. That's needed because DDL commits implicitly and ends the read-only transaction, PL/SQL blocks can run autonomous transactions, and a `COMMIT` would make the session read-write again. The guard refuses those, along with `commit()` and procedure calls.
   - **Ora2Pg:** it only runs its report modes (`SHOW_VERSION`, `SHOW_REPORT`), with `TRANSACTION readonly`.
+  - **Never in the way of other sessions:** every PostgreSQL session also sets `lock_timeout = 5s`, so a read that meets a table locked by DDL or maintenance gives up quickly instead of queueing behind it, where it could delay that work. The catalog read takes no table locks for its main queries. For a table that another session holds exclusively, it skips only the parts PostgreSQL can't produce without a lock (column defaults, full index and trigger definitions) and says so in the snapshot's warnings.
   - **Still use read-only accounts.** A database account without write privileges is the only guarantee that also covers other tools and future code.
 - **Validated connection fields.** Host, service and user names are restricted to safe characters, because they end up inside Ora2Pg's config file and DBI DSN.
 - **Local-only ports.** All ports are bound to `127.0.0.1`. There is no authentication yet, so don't expose the stack beyond your machine.
