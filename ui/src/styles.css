@@ -542,3 +542,12 @@ tr.diff-row:has(+ tr.diff-msg) > td { border-bottom: none; }
 .seq-list { max-height: 460px; overflow-y: auto; }
 .seq-table-list { max-height: 700px; overflow-y: auto; }
 .seq-list thead th, .seq-table-list thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+
+/* LOB data check (Overview) */
+.lob-table tr.lob-table-row > td { border-top: 2px solid var(--border); }
+table.lob-table th, table.lob-table td { padding-left: 6px; padding-right: 6px; }
+table.lob-table thead th { white-space: normal; }
+.lob-table td.lob-name { min-width: 165px; max-width: 250px; overflow-wrap: anywhere; }
+table.lob-table td.num { font-size: 12px; }
+table.lob-table td.lob-col-name { padding-left: 20px; }
+.lob-table td.lob-col-msg { padding-left: 34px; }

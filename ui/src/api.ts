@@ -906,3 +906,38 @@ export const sequenceStatsApi = {
     request<SequenceStatsBrief>("POST", "/sequence-stats", { oracle_connection_id: oracle, postgres_connection_id: postgres }),
   fixUrl: (id: string) => `/api/sequence-stats/${id}/fix.sql`,
 };
+
+// --- LOB data check (Overview) ---------------------------------------------------------------------
+
+export type LobStatus = "error" | "warning" | "info" | "ok";
+export interface LobIssue { severity: LobStatus; message: string }
+export interface LobMeasure {
+  column: string; type: string; unit: "bytes" | "chars" | null;
+  non_null?: number; non_empty?: number | null; total?: number | null; max?: number | null;
+}
+export interface LobColumnRow { column: string; oracle: LobMeasure | null; postgres: LobMeasure | null; status: LobStatus; issues: LobIssue[] }
+export interface LobTableRow {
+  schema: string; table: string; postgres_table: string | null; status: LobStatus; issues: LobIssue[];
+  oracle: { rows: number | null; num_rows: number | null; error: string | null; seconds: number | null } | null;
+  postgres: { rows: number | null; error: string | null; seconds: number | null } | null;
+  rows_missing: number; values_missing: number; columns: LobColumnRow[];
+}
+export interface LobSummary {
+  oracle_tables: number; oracle_columns: number; matched_tables: number; missing_tables: number; postgres_only_tables: number;
+  status: Record<LobStatus, number>; rows_missing: number; values_missing: number; truncated_columns: number; not_counted: number;
+}
+export interface LobCheckBrief {
+  id: string; oracle_connection_id: string; postgres_connection_id: string; job_id: string | null; status: JobStatus;
+  options: { sizes?: boolean; timeout_seconds?: number }; summary: Partial<LobSummary>; warnings: string[];
+  error: string | null; created_at: string; finished_at: string | null;
+}
+export interface LobCheckDetail extends LobCheckBrief { tables: LobTableRow[]; summary: LobSummary; sizes: boolean }
+
+export const lobApi = {
+  list: () => request<LobCheckBrief[]>("GET", "/lob-checks"),
+  get: (id: string) => request<LobCheckDetail>("GET", `/lob-checks/${id}`),
+  start: (oracle: string, postgres: string, sizes: boolean, timeoutSeconds: number) =>
+    request<LobCheckBrief>("POST", "/lob-checks", {
+      oracle_connection_id: oracle, postgres_connection_id: postgres, sizes, timeout_seconds: timeoutSeconds,
+    }),
+};

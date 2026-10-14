@@ -120,7 +120,7 @@ def fail_interrupted_jobs(session_factory: sessionmaker[Session]) -> int:
     with the scan, comparison or catalog snapshot they were driving. Call when a worker
     starts, before it takes new work: no job can genuinely be running at that point."""
     from app.models import (
-        CatalogPerfReview, CatalogSnapshot, ComparisonRun, Scan, ScanStatus, SequenceCheck, SequenceStats,
+        CatalogPerfReview, CatalogSnapshot, ComparisonRun, LobCheck, Scan, ScanStatus, SequenceCheck, SequenceStats,
     )
 
     now = datetime.now(UTC)
@@ -131,7 +131,7 @@ def fail_interrupted_jobs(session_factory: sessionmaker[Session]) -> int:
             job.status = JobStatus.FAILED
             job.error = reason
             job.finished_at = now
-            for model in (Scan, ComparisonRun, CatalogSnapshot, CatalogPerfReview, SequenceCheck, SequenceStats):
+            for model in (Scan, ComparisonRun, CatalogSnapshot, CatalogPerfReview, SequenceCheck, SequenceStats, LobCheck):
                 for row in session.scalars(select(model).where(
                     model.job_id == job.id, model.status.in_([ScanStatus.QUEUED, ScanStatus.RUNNING])
                 )):

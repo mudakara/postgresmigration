@@ -166,3 +166,23 @@ def sequence_stats(ctx: JobContext) -> dict[str, Any]:
             failed.finished_at = datetime.now(UTC)
             ctx.session.commit()
         raise
+
+
+@job_handler("lob_check")
+def lob_check(ctx: JobContext) -> dict[str, Any]:
+    """Count the LOB data of every table with LOB columns on Oracle and PostgreSQL (app.lobs)."""
+    from app.lobs.service import run_lob_check
+    from app.models import LobCheck
+
+    check_id = uuid.UUID(ctx.job.params["check_id"])
+    try:
+        return run_lob_check(ctx, check_id)
+    except Exception as exc:
+        ctx.session.rollback()
+        failed = ctx.session.get(LobCheck, check_id)
+        if failed is not None:
+            failed.status = ScanStatus.FAILED
+            failed.error = f"{type(exc).__name__}: {exc}"[:4000]
+            failed.finished_at = datetime.now(UTC)
+            ctx.session.commit()
+        raise

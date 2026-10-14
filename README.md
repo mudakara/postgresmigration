@@ -10,7 +10,7 @@ The app only **reads** the databases you connect to (sessions are read-only; see
 
 | Page | Use it to… |
 |---|---|
-| **Overview** | See every connected database's statistics side by side: tables, views, columns, indexes, foreign keys, procedures, functions, packages and triggers, plus tables without a primary key, foreign keys without an index, invalid code and disabled triggers. Click a number to list those items, filter by schema, and open any of them in the Schema explorer. |
+| **Overview** | See every connected database's statistics side by side: tables, views, columns, indexes, foreign keys, procedures, functions, packages and triggers, plus tables without a primary key, foreign keys without an index, invalid code and disabled triggers. Click a number to list those items, filter by schema, and open any of them in the Schema explorer. The **LOB data check** counts every table with BLOB/CLOB columns on both sides to find LOB data that didn't migrate. |
 | **Connections** | Save Oracle and PostgreSQL connections (passwords are encrypted), test them, and check what the account can see. |
 | **Projects → Scan & report** | Inventory every PL/SQL object in Oracle, flag risky constructs, and estimate the migration effort (Ora2Pg cost + the app's own rules). |
 | **Projects → Comparison** | For an existing migration: pair every Oracle routine, view and trigger with its PostgreSQL counterpart, compare signatures, run static pitfall checks and `plpgsql_check`, and optionally have Claude review each pair. |
@@ -116,6 +116,15 @@ Once a connection's catalog has been read (Schema explorer, or **Read catalog** 
 - **Matching rules:** columns, indexes and foreign keys are compared inside the tables that exist on both sides. Procedures and functions are matched across the migration (`PKG.MEMBER` ↔ `pkg.member`); one that changed kind, such as a procedure that became a function, counts as matched and is listed separately.
 - **PostgreSQL scope for packages:** Ora2Pg moves each Oracle package into a PostgreSQL schema of the same name, so a PostgreSQL connection's scope must include those schemas. **Add schemas for Oracle packages** on its edit form adds them. Click any count, for example **Indexes** or **Foreign keys → without an index**, to list those items below. Narrow the list by schema, filter or search, and click a name to open it in the Schema explorer. **Refresh** on a card reads the catalog again.
 
+**LOB data check**, further down, finds LOB data that didn't migrate. Choose the Oracle and PostgreSQL connections and click **Check LOB data**:
+- **What it reads:** every Oracle table in scope with BLOB, CLOB, NCLOB, BFILE, LONG, LONG RAW or XMLTYPE columns, paired with its PostgreSQL table. On both sides it counts:
+  - the rows;
+  - per LOB column, the values that are not NULL and the values with data (length > 0);
+  - optionally (**Measure sizes**), the total and largest length: bytes for binary, characters for text.
+- **Highlighted:** tables or columns missing in PostgreSQL, rows missing, LOB values missing or NULL, and values that got shorter. Values cut at exactly 1,047,552 (Ora2Pg's default `LONGREADLEN`, with `LONGTRUNCOK` on) are flagged even when Oracle couldn't be measured. Empty Oracle LOBs (`EMPTY_BLOB()`) that became NULL are noted, not counted as missing.
+- **Reading the results:** problems come first; filter by status or schema, search, and download the list as CSV. PostgreSQL tables with binary columns that don't exist in Oracle are listed as notes.
+- **Load and time limit:** read-only, and only counts and lengths are read, never the contents. Every table is read in full, two at a time per database. A table that exceeds the per-table limit, or whose session is closed by the server, is counted again without sizes. Data changed after the migration also shows as a difference.
+
 ### 2. Assess the Oracle code (Scenario 1)
 
 1. **Projects → New project**: pick the Oracle connection (and the PostgreSQL one, if a migration already exists). Optionally list the Oracle schemas to include; empty means every application schema.
@@ -195,6 +204,7 @@ The sandbox passwords are for local use only.
 | `DPY-3001` or `ORA-12660` (encryption) errors | The server requires Native Network Encryption, which thin mode doesn't support: set `ORACLE_CLIENT_MODE=thick` and recreate `api`/`worker`. |
 | Sequence check: "No Oracle sequences found in schemas named like the PostgreSQL ones" | The PostgreSQL connection probably points at the wrong database (for example `postgres`). Edit the connection's database name. |
 | Claude features say the API key is missing | Set `ANTHROPIC_API_KEY` in `.env` and run `docker compose up -d --force-recreate api worker`. |
+| LOB data check: a table is "counted without sizes" or "took longer than the time limit" | Measuring LOB lengths reads every LOB's locator, which is slow on very large tables. Choose a longer **Limit per table**, or untick **Measure sizes** for a quicker row and value count. |
 | A job seems stuck | Open it under **Jobs** to see its last progress message and log. Jobs interrupted by a worker restart are marked failed; start them again. |
 
 ## Architecture

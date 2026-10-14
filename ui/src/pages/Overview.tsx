@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { ErrorBanner, PageHeader } from "../components/ui";
 import DbStatistics from "./overview/DbStatistics";
+import LobComparison from "./overview/LobComparison";
 
 export default function OverviewPage() {
   const system = useQuery({ queryKey: ["system"], queryFn: api.system });
@@ -57,6 +58,7 @@ export default function OverviewPage() {
       </section>
 
       <DbStatistics connections={conns} />
+      <LobComparison connections={conns} />
 
       <section className="card">
         <h2>Getting started</h2>

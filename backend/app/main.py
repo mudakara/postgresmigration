@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import catalog, comparison, connections, inventory, jobs, projects, scans, sequences, system
+from app.api import catalog, comparison, connections, inventory, jobs, lobs, projects, scans, sequences, system
 from app.config import get_settings
 from app.security import get_cipher
 
@@ -22,5 +22,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (system, connections, projects, scans, inventory, comparison, catalog, sequences, jobs):
+for module in (system, connections, projects, scans, inventory, comparison, catalog, sequences, lobs, jobs):
     app.include_router(module.router, prefix="/api")
